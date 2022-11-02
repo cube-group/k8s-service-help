@@ -6,12 +6,11 @@ metadata:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: corecd-v2x-harbor
+  name: harbor
   namespace: zk
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: >-
-    eyJhdXRocyI6eyJoYXJib3IuZW9mZmNuLmNvbSI6eyJhdXRoIjoiWkdWMmIzQnpPa2hCU0dweFpESXhNMnByYTJ0eiIsInBhc3N3b3JkIjoiSEFIanFkMjEzamtra3MiLCJ1c2VybmFtZSI6ImRldm9wcyJ9fX0=
 ---
 kind: StorageClass
 apiVersion: storage.k8s.io/v1
@@ -177,12 +176,11 @@ spec:
 #      securityContext:
 #        fsGroup: 0
       imagePullSecrets:
-        - name: corecd-v2x-harbor
+        - name: harbor
       restartPolicy: Always
       containers:
         - name: zk
-          image: harbor.eoffcn.com/base/bitnami/zookeeper:3.8.0-debian-10-r0
-#          image: harbor.dosec.cn/newtest/zookeeper@sha256:aea7183f132a642d7508a17b71e205eea383e1f05efa6eb99f90d9fed997afc1
+          image: bitnami/zookeeper:3.8.0-debian-10-r0
           imagePullPolicy: "IfNotPresent"
           securityContext:
             runAsUser: 0 #以root身份运行否则会出现Permission Denied
