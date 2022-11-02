@@ -1,0 +1,285 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zk
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: corecd-v2x-harbor
+  namespace: zk
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: >-
+    eyJhdXRocyI6eyJoYXJib3IuZW9mZmNuLmNvbSI6eyJhdXRoIjoiWkdWMmIzQnpPa2hCU0dweFpESXhNMnByYTJ0eiIsInBhc3N3b3JkIjoiSEFIanFkMjEzamtra3MiLCJ1c2VybmFtZSI6ImRldm9wcyJ9fX0=
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: storage-class-zookeeper
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-zk-0
+  namespace: zk
+  labels:
+    app: zk
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/zk-0
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-zookeeper
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-zk-1
+  namespace: zk
+  labels:
+    app: zk
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/zk-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-zookeeper
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-zk-2
+  namespace: zk
+  labels:
+    app: zk
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/zk-2
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-zookeeper
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zk-scripts
+  namespace: zk
+  labels:
+    app: zk
+data:
+  init-certs.sh: |-
+    #!/bin/bash
+  setup.sh: |-
+    #!/bin/bash
+    echo "latest v1.0.1"
+    if [[ -f "/bitnami/zookeeper/data/myid" ]]; then
+        export ZOO_SERVER_ID="$(cat /bitnami/zookeeper/data/myid)"
+    else
+        HOSTNAME="$(hostname -s)"
+        if [[ $HOSTNAME =~ (.*)-([0-9]+)$ ]]; then
+            ORD=${BASH_REMATCH[2]}
+            export ZOO_SERVER_ID="$((ORD + 1 ))"
+        else
+            echo "Failed to get index from hostname $HOST"
+            exit 1
+        fi
+    fi
+    echo "\$ZOO_SERVER_ID: $ZOO_SERVER_ID"
+    exec /entrypoint.sh /run.sh
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-headless
+  namespace: zk
+  labels:
+    app: zk
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: tcp-client
+      port: 2181
+      targetPort: client
+    - name: tcp-follower
+      port: 2888
+      targetPort: follower
+    - name: tcp-election
+      port: 3888
+      targetPort: election
+  selector:
+    app: zk
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-service
+  namespace: zk
+  labels:
+    app: zk-service
+spec:
+  type: NodePort
+  publishNotReadyAddresses: true
+  ports:
+    - name: tcp-client
+      port: 2181
+      targetPort: client
+      nodePort: 30181
+    - name: tcp-follower
+      port: 2888
+      nodePort: 30288
+      targetPort: follower
+    - name: tcp-election
+      port: 3888
+      nodePort: 30388
+      targetPort: election
+  selector:
+    app: zk
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zk
+  namespace: zk
+  labels:
+    app: zk
+spec:
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: zk
+  serviceName: zk-headless
+  updateStrategy:
+    rollingUpdate: {}
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: zk
+    spec:
+      serviceAccountName: default
+      nodeSelector:
+        kubernetes.io/os: linux
+#      securityContext:
+#        fsGroup: 0
+      imagePullSecrets:
+        - name: corecd-v2x-harbor
+      restartPolicy: Always
+      containers:
+        - name: zk
+          image: harbor.eoffcn.com/base/bitnami/zookeeper:3.8.0-debian-10-r0
+#          image: harbor.dosec.cn/newtest/zookeeper@sha256:aea7183f132a642d7508a17b71e205eea383e1f05efa6eb99f90d9fed997afc1
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            runAsUser: 0 #以root身份运行否则会出现Permission Denied
+          command:
+            - /scripts/setup.sh
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: "0.5"
+              memory: 1Gi
+          env:
+            - name: BITNAMI_DEBUG
+              value: "false"
+            - name: ZOO_DATA_LOG_DIR
+              value: ""
+            - name: ZOO_PORT_NUMBER
+              value: "2181"
+            - name: ZOO_TICK_TIME
+              value: "2000"
+            - name: ZOO_INIT_LIMIT
+              value: "10"
+            - name: ZOO_SYNC_LIMIT
+              value: "5"
+            - name: ZOO_PRE_ALLOC_SIZE
+              value: "65536"
+            - name: ZOO_SNAPCOUNT
+              value: "100000"
+            - name: ZOO_MAX_CLIENT_CNXNS
+              value: "60"
+            - name: ZOO_4LW_COMMANDS_WHITELIST
+              value: "srvr, mntr, ruok"
+            - name: ZOO_LISTEN_ALLIPS_ENABLED
+              value: "no"
+            - name: ZOO_AUTOPURGE_INTERVAL
+              value: "0"
+            - name: ZOO_AUTOPURGE_RETAIN_COUNT
+              value: "3"
+            - name: ZOO_MAX_SESSION_TIMEOUT
+              value: "40000"
+            - name: ZOO_SERVERS
+              value: zk-0.zk-headless.zk.svc.cluster.local:2888:3888::1,zk-1.zk-headless.zk.svc.cluster.local:2888:3888::2,zk-2.zk-headless.zk.svc.cluster.local:2888:3888::3
+            - name: ZOO_ENABLE_AUTH
+              value: "no"
+            - name: ZOO_HEAP_SIZE
+              value: "1024"
+            - name: ZOO_LOG_LEVEL
+              value: "ERROR"
+            - name: ALLOW_ANONYMOUS_LOGIN
+              value: "yes"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+          ports:
+            - name: client
+              containerPort: 2181
+            - name: follower
+              containerPort: 2888
+            - name: election
+              containerPort: 3888
+          livenessProbe:
+            failureThreshold: 6
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            exec:
+              command: ['/bin/bash', '-c', 'echo "ruok" | timeout 2 nc -w 2 localhost 2181 | grep imok']
+          readinessProbe:
+            failureThreshold: 6
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            exec:
+              command: ['/bin/bash', '-c', 'echo "ruok" | timeout 2 nc -w 2 localhost 2181 | grep imok']
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts/setup.sh
+              subPath: setup.sh
+            - name: zookeeper-data
+              mountPath: /bitnami/zookeeper
+      volumes:
+        - name: scripts
+          configMap:
+            name: zk-scripts
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        storageClassName: storage-class-zookeeper
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi

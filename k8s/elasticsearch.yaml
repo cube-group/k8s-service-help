@@ -1,0 +1,261 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: es
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: storage-class-es
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: es
+  name: es-config
+  labels:
+    app: es
+    role: master
+data:
+  run.sh: |-
+    #!/bin/sh
+    cat /usr/share/elasticsearch/config/elasticsearch.yml
+    /bin/tini -- /usr/local/bin/docker-entrypoint.sh "eswrapper"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-es-0
+  namespace: es
+  labels:
+    app: es
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/es-0
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-es
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-es-1
+  namespace: es
+  labels:
+    app: es
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/es-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-es
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: k8s-pv-es-2
+  namespace: es
+  labels:
+    app: es
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /data/share/pv/es-2
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: storage-class-es
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: es
+  name: es
+  labels:
+    app: es
+    role: master-node
+spec:
+  serviceName: es-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: es
+      role: master-node
+  template:
+    metadata:
+      labels:
+        app: es
+        role: master-node
+    spec:
+      containers:
+        - name: es
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - /run.sh
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.15.0
+          env:
+            - name: "cluster.name"
+              value: "default"
+            - name: "node.master"
+              value: "true"
+            - name: "node.data"
+              value: "true"
+            - name: "node.ingest"
+              value: "false"
+            - name: "node.name"
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: "network.host"
+              value: "0.0.0.0"
+            - name: "http.cors.enabled"
+              value: "true"
+            - name: "http.cors.allow-origin"
+              value: "/.*/"
+            - name: "discovery.zen.ping.unicast.hosts"
+              value: "es-0.es-headless,es-1.es-headless,es-2.es-headless,es-client"
+            - name: "cluster.initial_master_nodes"
+              value: "es-0,es-1,es-2"
+            - name: "ES_JAVA_OPTS"
+              value: "-Xms512m -Xmx512m"
+          ports:
+            - containerPort: 9300
+              name: transport
+          volumeMounts:
+#            - name: config
+#              mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+#              readOnly: true
+#              subPath: elasticsearch.yml
+            - name: config
+              mountPath: /run.sh
+              readOnly: true
+              subPath: run.sh
+            - name: storage
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: es-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        storageClassName: storage-class-es
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+---
+#client
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: es
+  name: es-client
+  labels:
+    app: es
+    role: client
+spec:
+  selector:
+    matchLabels:
+      app: es
+      role: client
+  template:
+    metadata:
+      labels:
+        app: es
+        role: client
+    spec:
+      containers:
+        - name: es-client
+          command:
+            - sh
+            - /run.sh
+          image: docker.elastic.co/elasticsearch/elasticsearch:7.15.0
+          env:
+          - name: "cluster.name"
+            value: "default"
+          - name: "node.master"
+            value: "false"
+          - name: "node.data"
+            value: "false"
+          - name: "node.ingest"
+            value: "false"
+          - name: "node.name"
+            value: "client"
+          - name: "network.host"
+            value: "0.0.0.0"
+          - name: "http.cors.enabled"
+            value: "true"
+          - name: "http.cors.allow-origin"
+            value: "/.*/"
+          - name: "discovery.zen.ping.unicast.hosts"
+            value: "es-0.es-headless,es-1.es-headless,es-2.es-headless,es-client"
+          - name: "cluster.initial_master_nodes"
+            value: "es-0,es-1,es-2"
+          - name: "ES_JAVA_OPTS"
+            value: "-Xms512m -Xmx512m"
+          ports:
+            - containerPort: 9200
+              name: client
+            - containerPort: 9300
+              name: transport
+          volumeMounts:
+            - name: config
+              mountPath: /run.sh
+              readOnly: true
+              subPath: run.sh
+            - name: storage
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: es-config
+        - name: "storage"
+          emptyDir:
+            medium: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: es
+  name: es-headless
+  labels:
+    app: es
+    role: master-node
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9300
+      targetPort: transport
+  selector:
+    app: es
+    role: master-node
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: es
+  name: es-client
+  labels:
+    app: es
+    role: client
+spec:
+  ports:
+    - port: 9200
+      targetPort: client
+  selector:
+    app: es
+    role: client
